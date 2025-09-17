@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CustQR - Professional QR Code Generator</title>
+    <meta name="description" content="Generate high-quality, customizable QR codes instantly. Enterprise-grade QR generator with logo support, multiple formats, and real-time preview.">
+    <meta name="keywords" content="QR code generator, custom QR codes, logo QR codes, professional QR generator, enterprise QR tools">
+    
+    <!-- Open Graph -->
+    <meta property="og:title" content="CustQR - Professional QR Code Generator">
+    <meta property="og:description" content="Generate high-quality, customizable QR codes instantly. Enterprise-grade QR generator with logo support, multiple formats, and real-time preview.">
+    <meta property="og:type" content="website">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.js">
+    
+    <!-- External Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app">
+        <!-- Toast Container -->
+        <div id="toast-container" class="toast-container"></div>
+        
+        <!-- Main Container -->
+        <div class="container">
+            <!-- Header -->
+            <header class="header">
+                <h1 class="title">CustQR</h1>
+                <p class="subtitle">Professional QR Code Generator</p>
+            </header>
+
+            <!-- Main Grid -->
+            <div class="main-grid">
+                <!-- Controls Panel -->
+                <div class="card controls-panel">
+                    <div class="card-header">
+                        <h2 class="card-title">
+                            <i data-lucide="settings"></i>
+                            Configuration
+                        </h2>
+                        <p class="card-description">Customize your QR code settings and branding</p>
+                    </div>
+                    
+                    <div class="card-content">
+                        <!-- URL Input -->
+                        <div class="form-group">
+                            <label for="url-input" class="label">Target URL</label>
+                            <div class="input-wrapper">
+                                <input 
+                                    type="url" 
+                                    id="url-input" 
+                                    class="input" 
+                                    placeholder="https://example.com"
+                                    autocomplete="url"
+                                >
+                                <div class="input-icon" id="url-status"></div>
+                            </div>
+                        </div>
+
+                        <!-- Tabs -->
+                        <div class="tabs">
+                            <div class="tabs-list">
+                                <button class="tab-trigger active" data-tab="appearance">
+                                    <i data-lucide="palette"></i>
+                                    Appearance
+                                </button>
+                                <button class="tab-trigger" data-tab="advanced">Advanced</button>
+                            </div>
+
+                            <!-- Appearance Tab -->
+                            <div class="tab-content active" id="appearance-tab">
+                                <!-- Color Customization -->
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="foreground-color" class="label">Foreground Color</label>
+                                        <div class="color-input-group">
+                                            <input type="color" id="foreground-color" value="#1e293b" class="color-picker">
+                                            <input type="text" id="foreground-text" value="#1e293b" class="input color-text">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="background-color" class="label">Background Color</label>
+                                        <div class="color-input-group">
+                                            <input type="color" id="background-color" value="#ffffff" class="color-picker">
+                                            <input type="text" id="background-text" value="#ffffff" class="input color-text">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Logo Upload -->
+                                <div class="form-group">
+                                    <label class="label">Logo (Optional)</label>
+                                    <div class="upload-area" id="logo-upload">
+                                        <div class="upload-content" id="upload-content">
+                                            <i data-lucide="upload"></i>
+                                            <p class="upload-text">Drag & drop or click to upload logo</p>
+                                            <p class="upload-subtext">PNG, JPG up to 2MB</p>
+                                        </div>
+                                        <div class="logo-preview hidden" id="logo-preview">
+                                            <img id="logo-image" alt="Logo" class="logo-img">
+                                            <p class="upload-text">Click to change logo</p>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="logo-input" accept="image/*" style="display: none;">
+                                </div>
+                            </div>
+
+                            <!-- Advanced Tab -->
+                            <div class="tab-content" id="advanced-tab">
+                                <!-- Error Correction -->
+                                <div class="form-group">
+                                    <label for="error-correction" class="label">Error Correction Level</label>
+                                    <select id="error-correction" class="select">
+                                        <option value="L">Low (7%)</option>
+                                        <option value="M" selected>Medium (15%)</option>
+                                        <option value="Q">Quartile (25%)</option>
+                                        <option value="H">High (30%)</option>
+                                    </select>
+                                </div>
+
+                                <!-- Size and Margin -->
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="qr-size" class="label">Size (px)</label>
+                                        <input type="number" id="qr-size" class="input" value="256" min="128" max="1024">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="qr-margin" class="label">Margin</label>
+                                        <input type="number" id="qr-margin" class="input" value="2" min="0" max="10">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview Panel -->
+                <div class="card preview-panel">
+                    <div class="card-header">
+                        <h2 class="card-title">Preview & Download</h2>
+                        <p class="card-description">Real-time preview of your QR code</p>
+                    </div>
+                    
+                    <div class="card-content">
+                        <!-- QR Preview -->
+                        <div class="qr-preview-container">
+                            <div class="qr-preview" id="qr-preview">
+                                <div class="qr-placeholder" id="qr-placeholder">
+                                    <p>Enter a URL to generate QR code</p>
+                                </div>
+                                <canvas id="qr-canvas" class="hidden"></canvas>
+                                <div class="logo-overlay hidden" id="logo-overlay">
+                                    <img id="overlay-logo" alt="Logo">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Download Buttons -->
+                        <div class="download-section hidden" id="download-section">
+                            <label class="label">Download Options</label>
+                            <div class="download-buttons">
+                                <button class="btn btn-outline" id="download-png">
+                                    <i data-lucide="download"></i>
+                                    PNG
+                                </button>
+                                <button class="btn btn-outline" id="download-svg">
+                                    <i data-lucide="download"></i>
+                                    SVG
+                                </button>
+                                <button class="btn btn-outline" id="download-pdf">
+                                    <i data-lucide="download"></i>
+                                    PDF
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Generate Button -->
+                        <button class="btn btn-primary btn-large" id="generate-btn" disabled>
+                            Generate QR Code
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Initialize Lucide Icons -->
+    <script>
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+        }
+    </script>
+    
+    <!-- Main Script -->
+    <script src="js/script.js"></script>
+</body>
+</html>
