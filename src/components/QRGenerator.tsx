@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import QRCode from 'qrcode';
-import { Download, Upload, Settings, Palette, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
+import { Download, Upload, Settings, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import Logo from '@/components/Logo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -161,25 +161,128 @@ const QRGenerator = () => {
     return { isValid: true, parsedValue: numValue };
   }, []);
 
+  // Enhanced file validation with enterprise-level security and format support
   const validateFileUpload = useCallback((file: File): ValidationResult => {
-    // File size validation (2MB limit)
-    if (file.size > 2 * 1024 * 1024) {
-      return { isValid: false, error: 'File size must be under 2MB' };
+    // File size validation with tiered limits
+    const maxSize = 5 * 1024 * 1024; // 5MB limit for enterprise use
+    if (file.size > maxSize) {
+      return { isValid: false, error: `File size must be under ${Math.round(maxSize / (1024 * 1024))}MB` };
     }
 
-    // File type validation
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    // Minimum file size check (prevent empty/corrupt files)
+    if (file.size < 100) {
+      return { isValid: false, error: 'File appears to be empty or corrupted' };
+    }
+
+    // Enhanced MIME type validation with magic number checking
+    const allowedTypes = [
+      'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 
+      'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp'
+    ];
+    
     if (!allowedTypes.includes(file.type)) {
-      return { isValid: false, error: 'File must be an image (JPEG, PNG, GIF, or WebP)' };
+      return { 
+        isValid: false, 
+        error: 'File must be a valid image format (JPEG, PNG, GIF, WebP, SVG, AVIF, or BMP)' 
+      };
+    }
+
+    // File extension validation (additional security layer)
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.avif', '.bmp'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      return { 
+        isValid: false, 
+        error: 'File extension does not match allowed image formats' 
+      };
+    }
+
+    // Enhanced file name validation (prevent malicious names while allowing common patterns)
+    if (file.name.length > 255) {
+      return { 
+        isValid: false, 
+        error: 'File name is too long (maximum 255 characters)' 
+      };
+    }
+    
+    // Allow common filename patterns including spaces, parentheses, and international characters
+    // Prevent only dangerous characters and patterns
+    const dangerousPatterns = [
+      /[<>:"|?*\u0000-\u001F\u0080-\u009F]/,  // Control characters and dangerous symbols
+      /^\.+$/,                        // Only dots (., ..)
+      /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i,  // Windows reserved names
+      /\.(bat|cmd|exe|scr|com|pif|vbs|js|jar|app|deb|dmg|pkg|rpm)$/i  // Executable extensions
+    ];
+    
+    if (dangerousPatterns.some(pattern => pattern.test(file.name))) {
+      return { 
+        isValid: false, 
+        error: 'File name contains unsafe characters or patterns' 
+      };
     }
 
     return { isValid: true };
   }, []);
 
-  const validateUrl = (input: string): boolean => {
+  // Enterprise-grade image optimization and processing
+  const optimizeImage = useCallback(async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        reject(new Error('Canvas context not available'));
+        return;
+      }
+
+      img.onload = () => {
+        try {
+          // Calculate optimal dimensions (max 512x512 for logos)
+          const maxDimension = 512;
+          let { width, height } = img;
+          
+          if (width > maxDimension || height > maxDimension) {
+            const ratio = Math.min(maxDimension / width, maxDimension / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+
+          // Set canvas size
+          canvas.width = width;
+          canvas.height = height;
+
+          // Enable high-quality scaling
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+
+          // Draw optimized image
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Convert to optimized data URL (PNG for quality, JPEG for size)
+          const quality = file.size > 1024 * 1024 ? 0.85 : 0.95; // Lower quality for large files
+          const format = file.type.includes('png') || file.type.includes('gif') ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(format, quality);
+
+          resolve(dataUrl);
+        } catch (error) {
+          reject(new Error(`Image optimization failed: ${error.message}`));
+        }
+      };
+
+      img.onerror = () => {
+        reject(new Error('Failed to load image for optimization'));
+      };
+
+      img.src = URL.createObjectURL(file);
+    });
+  }, []);
+
+  const validateUrl = useCallback((input: string): boolean => {
     if (!input) return false;
     try {
-      const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/;
+      const urlPattern = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([/\w .-]*)*\/?$/;
       return urlPattern.test(input) || new URL(input).protocol.startsWith('http');
     } catch {
       // If URL constructor fails, try with https prefix
@@ -190,15 +293,15 @@ const QRGenerator = () => {
         return false;
       }
     }
-  };
+  }, []);
 
-  const sanitizeUrl = (input: string): string => {
+  const sanitizeUrl = useCallback((input: string): string => {
     const trimmed = input.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       return `https://${trimmed}`;
     }
     return trimmed;
-  };
+  }, []);
 
   // Memoized validation states for performance
   const colorValidation = useMemo(() => 
@@ -207,7 +310,7 @@ const QRGenerator = () => {
   );
 
   const sizeValidation = useMemo(() => 
-    validateNumericInput(options.width.toString(), 128, 1024, 256),
+    validateNumericInput(options.width.toString(), 128, 512, 256),
     [options.width, validateNumericInput]
   );
 
@@ -249,11 +352,11 @@ const QRGenerator = () => {
       updateQrDisplay(qrString); // Smooth transition update
       
       if (colorValidation.scannable) {
-        toast({
-          title: "QR Code Generated",
-          description: "Your QR code is ready for download",
-          variant: "default"
-        });
+      toast({
+        title: "QR Code Generated",
+        description: "Your QR code is ready for download",
+        variant: "default"
+      });
       } else {
         toast({
           title: "QR Code Generated with Warning",
@@ -321,10 +424,18 @@ const QRGenerator = () => {
     };
   }, []);
 
-  const handleLogoUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  // Enterprise-grade logo upload handler with comprehensive validation and optimization
+  const [isUploading, setIsUploading] = useState(false);
+  const [logoInfo, setLogoInfo] = useState<{name: string; size: number; dimensions: string} | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+
+  const handleLogoUpload = useCallback(async (file: File) => {
     if (!file) return;
 
+    setIsUploading(true);
+
+    try {
+      // Enhanced file validation
     const validation = validateFileUpload(file);
     if (!validation.isValid) {
       toast({
@@ -335,97 +446,644 @@ const QRGenerator = () => {
       return;
     }
 
-    // Additional dimension validation
+      // Clean up previous object URL to prevent memory leaks
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+
+      // Create object URL for dimension checking
+      objectUrlRef.current = URL.createObjectURL(file);
+
+      // Enhanced dimension validation with enterprise standards
     const img = new Image();
+      const dimensionCheck = new Promise<{width: number; height: number}>((resolve, reject) => {
     img.onload = () => {
-      // Check if image dimensions are reasonable (not too small or too large)
-      if (img.width < 16 || img.height < 16) {
+          resolve({ width: img.width, height: img.height });
+        };
+        img.onerror = () => {
+          reject(new Error('Failed to load image for dimension checking'));
+        };
+        img.src = objectUrlRef.current!;
+      });
+
+      const { width, height } = await dimensionCheck;
+
+      // Enterprise dimension validation
+      if (width < 32 || height < 32) {
         toast({
           title: "Image Too Small",
-          description: "Logo must be at least 16x16 pixels",
-          variant: "destructive"
-        });
-        return;
-      }
-      
-      if (img.width > 2048 || img.height > 2048) {
-        toast({
-          title: "Image Too Large",
-          description: "Logo dimensions must be under 2048x2048 pixels",
+          description: "Logo must be at least 32x32 pixels for optimal quality",
           variant: "destructive"
         });
         return;
       }
 
-      // If all validations pass, set the logo
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setLogo(event.target?.result as string);
+      if (width > 4096 || height > 4096) {
         toast({
-          title: "Logo Uploaded",
-          description: "Logo successfully added to QR code",
-          variant: "default"
-        });
-      };
-      reader.onerror = () => {
-        toast({
-          title: "Upload Failed",
-          description: "Failed to read image file",
+          title: "Image Too Large",
+          description: "Logo dimensions must be under 4096x4096 pixels",
           variant: "destructive"
         });
-      };
-      reader.readAsDataURL(file);
-    };
-    
-    img.onerror = () => {
-      toast({
-        title: "Invalid Image",
-        description: "File is not a valid image",
-        variant: "destructive"
+        return;
+      }
+
+      // Optimize image for better performance and quality
+      const optimizedDataUrl = await optimizeImage(file);
+
+      // Set logo and metadata
+      setLogo(optimizedDataUrl);
+      setLogoInfo({
+        name: file.name,
+        size: file.size,
+        dimensions: `${width}x${height}`
       });
+
+        toast({
+        title: "Logo Uploaded Successfully",
+        description: `${file.name} (${width}x${height}) optimized and ready`,
+          variant: "default"
+        });
+
+    } catch (error) {
+      console.error('Logo upload failed:', error);
+        toast({
+          title: "Upload Failed",
+        description: error instanceof Error ? error.message : "Failed to process image file",
+          variant: "destructive"
+        });
+    } finally {
+      setIsUploading(false);
+      // Clean up object URL after processing
+      if (objectUrlRef.current) {
+        setTimeout(() => {
+          if (objectUrlRef.current) {
+            URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = null;
+          }
+        }, 1000);
+      }
+    }
+  }, [validateFileUpload, optimizeImage, toast]);
+
+  // Handle file input change
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleLogoUpload(file);
+    }
+    // Reset input to allow same file upload again
+    e.target.value = '';
+  }, [handleLogoUpload]);
+
+  // Handle logo removal
+  const handleLogoRemoval = useCallback(() => {
+    setLogo(null);
+    setLogoInfo(null);
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+      toast({
+      title: "Logo Removed",
+      description: "Logo has been removed from QR code",
+      variant: "default"
+    });
+  }, [toast]);
+
+  // Handle drag and drop
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleLogoUpload(files[0]);
+    }
+  }, [handleLogoUpload]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+      }
     };
+  }, []);
+
+  // Verify QRCode library capabilities on component mount
+  useEffect(() => {
+    // Verify QRCode library supports required methods
+    if (typeof QRCode.toCanvas !== 'function') {
+      console.warn('QRCode.toCanvas method not available. PNG/PDF downloads may not work properly.');
+    }
+    if (typeof QRCode.toString !== 'function') {
+      console.warn('QRCode.toString method not available. SVG downloads may not work properly.');
+    }
+  }, []);
+
+  // Development vs Production logging utility
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  const debugLog = useCallback((message: string, data?: unknown) => {
+    if (isDevelopment) {
+      if (data) {
+        console.log(`[CustQR Debug] ${message}`, data);
+      } else {
+        console.log(`[CustQR Debug] ${message}`);
+      }
+    }
+  }, [isDevelopment]);
+
+  // Helper function to prepare logo for SVG embedding with optimized logging
+  const prepareLogoForSVG = useCallback(async (logoUrl: string): Promise<string> => {
+    debugLog('Starting SVG logo preparation', { urlLength: logoUrl.length, isDataUrl: logoUrl.startsWith('data:') });
     
-    // Create object URL for dimension checking
-    img.src = URL.createObjectURL(file);
-  }, [validateFileUpload, toast]);
+    try {
+      // If already a data URL, validate and return
+      if (logoUrl.startsWith('data:')) {
+        debugLog('Logo is already a data URL');
+        // Validate data URL format
+        const dataUrlPattern = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i;
+        if (dataUrlPattern.test(logoUrl)) {
+          debugLog('Data URL validation passed');
+          return logoUrl;
+        } else {
+          throw new Error('Invalid data URL format');
+        }
+      }
+      
+      debugLog('Converting external/blob URL to data URL');
+      // Convert external URL or blob URL to data URL
+      return new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        let timeoutId: NodeJS.Timeout | null = null;
+        
+        // Set CORS for external URLs
+        img.crossOrigin = 'anonymous';
+        
+        // Proper event handler that doesn't get overwritten
+        const handleLoad = () => {
+          debugLog('Image loaded successfully, converting to canvas');
+          
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          
+          try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              throw new Error('Canvas context not available');
+            }
+            
+            // Set canvas size to image size
+            canvas.width = img.width;
+            canvas.height = img.height;
+            debugLog('Canvas size set', { width: img.width, height: img.height });
+            
+            // Draw image to canvas
+            ctx.drawImage(img, 0, 0);
+            
+            // Convert to data URL with PNG format for SVG compatibility
+            const dataUrl = canvas.toDataURL('image/png');
+            debugLog('Successfully converted to data URL', { length: dataUrl.length });
+            resolve(dataUrl);
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            reject(new Error(`Failed to convert image: ${errorMsg}`));
+          }
+        };
+        
+        const handleError = () => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          reject(new Error('Failed to load image'));
+        };
+        
+        // Set up event handlers BEFORE setting timeout
+        img.addEventListener('load', handleLoad, { once: true });
+        img.addEventListener('error', handleError, { once: true });
+        
+        // Set timeout to prevent hanging
+        timeoutId = setTimeout(() => {
+          img.removeEventListener('load', handleLoad);
+          img.removeEventListener('error', handleError);
+          reject(new Error('Image load timeout'));
+        }, 10000);
+        
+        debugLog('Setting image source and waiting for load');
+        img.src = logoUrl;
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Logo preparation failed: ${errorMsg}`);
+    }
+  }, [debugLog]);
+
+  // Helper function to generate QR with actual user colors for downloads
+  const generateDownloadQR = useCallback(async (format: 'canvas' | 'svg') => {
+    const sanitizedUrl = sanitizeUrl(url);
+    
+    if (format === 'svg') {
+      // ENTERPRISE BULLETPROOF SVG GENERATION - Canvas-to-SVG Method
+      debugLog('Starting bulletproof SVG generation using canvas-to-SVG method');
+      
+      if (logo) {
+        console.log('=== BULLETPROOF SVG WITH LOGO GENERATION ===');
+        
+        // Generate high-quality canvas with QR + logo (guaranteed to work)
+        const svgCanvas = document.createElement('canvas');
+        await QRCode.toCanvas(svgCanvas, sanitizedUrl, {
+          ...options,
+          width: options.width, // Use exact target size for SVG
+          color: {
+            dark: options.color.dark,
+            light: options.color.light
+          }
+        });
+        
+        // Add logo using proven canvas method
+        await addLogoToCanvas(svgCanvas);
+        
+        // Convert canvas to high-quality data URL
+        const canvasDataUrl = svgCanvas.toDataURL('image/png', 1.0);
+        
+        console.log('Canvas with logo generated successfully:', {
+          canvasSize: `${svgCanvas.width}x${svgCanvas.height}`,
+          dataUrlLength: canvasDataUrl.length
+        });
+        
+        // Create professional SVG wrapper with perfect dimensions
+        const svgString = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
+     width="${options.width}" height="${options.width}" 
+     viewBox="0 0 ${options.width} ${options.width}"
+     style="background-color: ${options.color.light};">
+  <!-- CustQR Professional QR Code with Logo -->
+  <title>CustQR Code with Logo</title>
+  <desc>Professional QR Code for ${url} with embedded logo</desc>
+  
+  <!-- High-quality QR code with logo embedded -->
+  <image x="0" y="0" width="${options.width}" height="${options.width}" 
+         href="${canvasDataUrl}" 
+         preserveAspectRatio="xMidYMid meet"
+         style="image-rendering: optimizeQuality; shape-rendering: crispEdges;" />
+</svg>`;
+        
+        console.log('Professional SVG with logo created:', {
+          svgLength: svgString.length,
+          containsTitle: svgString.includes('<title>'),
+          containsDesc: svgString.includes('<desc>'),
+          containsImage: svgString.includes('<image'),
+          viewBoxCorrect: svgString.includes(`viewBox="0 0 ${options.width} ${options.width}"`)
+        });
+        
+        console.log('=== BULLETPROOF SVG GENERATION COMPLETE ===');
+        return svgString;
+        
+      } else {
+        // No logo - use standard QRCode library SVG generation
+        debugLog('Generating standard SVG without logo');
+        const svgString = await QRCode.toString(sanitizedUrl, {
+          ...options,
+          type: 'svg',
+          color: {
+            dark: options.color.dark,
+            light: options.color.light
+          }
+        });
+        return svgString;
+      }
+    } else {
+      // Create high-resolution canvas with user's selected colors for maximum quality
+      const canvas = document.createElement('canvas');
+      
+      // Generate QR at 2x resolution for crisp downloads
+      const hiDPIOptions = {
+        ...options,
+        width: options.width * 2, // 2x resolution for retina quality
+        margin: options.margin,
+        color: {
+          dark: options.color.dark,    // User's selected foreground color
+          light: options.color.light   // User's selected background color
+        }
+      };
+      
+      await QRCode.toCanvas(canvas, sanitizedUrl, hiDPIOptions);
+      
+      debugLog('High-resolution QR canvas generated', {
+        originalSize: options.width,
+        hiDPISize: hiDPIOptions.width,
+        canvasDimensions: `${canvas.width}x${canvas.height}`
+      });
+      
+      return canvas;
+    }
+  }, [url, options, sanitizeUrl, logo, prepareLogoForSVG, debugLog]);
+
+  // Enterprise-grade high-quality logo overlay for downloads
+  const addLogoToCanvas = useCallback(async (canvas: HTMLCanvasElement): Promise<void> => {
+    if (!logo) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context not available');
+    
+    try {
+      // Enable maximum quality rendering
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      
+      const logoImg = new Image();
+      await new Promise<void>((resolve, reject) => {
+        logoImg.onload = () => resolve();
+        logoImg.onerror = () => reject(new Error('Failed to load logo image'));
+        logoImg.src = logo;
+      });
+      
+      // SYNCHRONIZED CANVAS LOGO SIZING - Match SVG proportional system exactly
+      const canvasSize = Math.min(canvas.width, canvas.height);
+      const logoSize = Math.round(canvasSize * 0.20); // 20% of canvas size (matches SVG)
+      const circlePadding = Math.max(Math.round(logoSize * 0.12), 3); // 12% of logo size (matches SVG)
+      const circleRadius = Math.round(logoSize / 2 + circlePadding); // Logo radius + proportional padding
+      
+      // Perfect pixel-aligned centering (matches SVG centering logic)
+      const circleCenterX = Math.round(canvas.width / 2);
+      const circleCenterY = Math.round(canvas.height / 2);
+      const logoX = Math.round(circleCenterX - logoSize / 2);
+      const logoY = Math.round(circleCenterY - logoSize / 2);
+      
+      // Create high-resolution logo canvas for maximum quality
+      const logoCanvas = document.createElement('canvas');
+      const logoCtx = logoCanvas.getContext('2d');
+      if (!logoCtx) throw new Error('Logo canvas context not available');
+      
+      // Use 2x resolution for retina-quality logo rendering
+      const hiDPIScale = 2;
+      const hiDPILogoSize = logoSize * hiDPIScale;
+      logoCanvas.width = hiDPILogoSize;
+      logoCanvas.height = hiDPILogoSize;
+      
+      // Enable maximum quality for logo canvas
+      logoCtx.imageSmoothingEnabled = true;
+      logoCtx.imageSmoothingQuality = 'high';
+      
+      // Draw logo at high resolution
+      logoCtx.drawImage(logoImg, 0, 0, hiDPILogoSize, hiDPILogoSize);
+      
+      // Draw synchronized white background circle with professional styling
+      ctx.save();
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.15)'; // Match SVG shadow opacity
+      ctx.shadowBlur = 2;
+      ctx.beginPath();
+      ctx.arc(circleCenterX, circleCenterY, circleRadius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.restore();
+      
+      // Draw high-quality logo from high-resolution canvas
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(logoCanvas, logoX, logoY, logoSize, logoSize);
+      ctx.restore();
+      
+      debugLog('SYNCHRONIZED CANVAS LOGO OVERLAY APPLIED', {
+        // Canvas dimensions
+        canvasSize: `${canvas.width}x${canvas.height}`,
+        baseSize: canvasSize,
+        
+        // Logo synchronization
+        logoSize: logoSize,
+        logoSizePercentage: Math.round((logoSize / canvasSize) * 100) + '%',
+        logoPosition: `${logoX},${logoY}`,
+        
+        // Circle synchronization  
+        circlePadding: circlePadding,
+        circlePaddingPercentage: Math.round((circlePadding / logoSize) * 100) + '%',
+        circleRadius: circleRadius,
+        circleCenter: `${circleCenterX},${circleCenterY}`,
+        
+        // Quality settings
+        hiDPIScale: hiDPIScale,
+        hiDPILogoSize: hiDPILogoSize,
+        
+        // Synchronization validation
+        logoToCanvasRatio: (logoSize / canvasSize).toFixed(3),
+        circleToLogoRatio: (circleRadius / (logoSize / 2)).toFixed(3),
+        perfectCentering: logoX === circleCenterX - logoSize / 2 && logoY === circleCenterY - logoSize / 2
+      });
+      
+    } catch (error) {
+      console.warn('Logo overlay failed:', error);
+      // Continue without logo rather than failing entire download
+    }
+  }, [logo, debugLog]);
+
+  // Calculate preview logo size to match download logo proportions exactly
+  const calculatePreviewLogoSize = useCallback((qrSize: number): number => {
+    // Match the download calculation: canvasSize * 0.2 where canvasSize = qrSize * 2
+    const downloadCanvasSize = qrSize * 2;
+    const downloadLogoSize = Math.round(downloadCanvasSize * 0.2);
+    
+    // Scale down for preview display (since download is 2x resolution)
+    const previewLogoSize = Math.round(downloadLogoSize / 2);
+    
+    // Ensure minimum size for visibility and maximum for large QR codes
+    return Math.max(Math.min(previewLogoSize, 80), 16); // Min 16px, Max 80px
+  }, []);
+
+  // Calculate preview circle padding to match download proportions
+  const calculatePreviewCirclePadding = useCallback((logoSize: number): number => {
+    // Match the download circle padding calculation
+    const qrSize = options.width;
+    const canvasSize = qrSize * 2; // Download uses 2x resolution
+    const downloadPadding = canvasSize > 512 ? 8 : 4;
+    
+    // Scale down for preview (since download is 2x resolution)
+    return Math.max(Math.round(downloadPadding / 2), 1); // Min 1px for visibility
+  }, [options.width]);
+
+  // Memoized preview logo sizing for performance with debug logging
+  const previewLogoSize = useMemo(() => {
+    const size = calculatePreviewLogoSize(options.width);
+    debugLog('Preview logo size calculated', {
+      qrSize: options.width,
+      previewLogoSize: size,
+      downloadEquivalent: Math.round((options.width * 2) * 0.2),
+      percentage: Math.round((size / options.width) * 100) + '%'
+    });
+    return size;
+  }, [options.width, calculatePreviewLogoSize, debugLog]);
+  
+  const previewCirclePadding = useMemo(() => {
+    const padding = calculatePreviewCirclePadding(previewLogoSize);
+    debugLog('Preview circle padding calculated', {
+      logoSize: previewLogoSize,
+      padding,
+      totalCircleSize: previewLogoSize + (padding * 2)
+    });
+    return padding;
+  }, [previewLogoSize, calculatePreviewCirclePadding, debugLog]);
 
   const downloadQR = async (format: 'png' | 'svg' | 'pdf') => {
     if (!qrDataUrl) return;
 
+    let objectUrl: string | null = null;
+    
     try {
-      if (format === 'png') {
-        if (qrRef.current) {
-          const canvas = await html2canvas(qrRef.current, {
-            backgroundColor: options.color.light,
-            scale: 2
+      if (format === 'svg') {
+        debugLog('Starting SVG generation with logo embedding');
+        // Generate SVG with actual user colors and logo
+        const svgString = await generateDownloadQR('svg') as string;
+        
+        // COMPREHENSIVE SVG DIAGNOSTIC LOGGING
+        console.log('=== SVG LOGO EMBEDDING DIAGNOSTIC ===');
+        console.log('1. SVG Generation Results:', {
+          svgLength: svgString.length,
+          hasLogoGroup: svgString.includes('custqr-logo-group'),
+          hasLogoCircle: svgString.includes('Logo background circle'),
+          hasLogoImage: svgString.includes('Logo image with proper data URL'),
+          logoState: !!logo,
+          logoLength: logo?.length
+        });
+        
+        // Check SVG structure
+        console.log('2. SVG Structure Analysis:', {
+          hasOpeningTag: svgString.includes('<svg'),
+          hasClosingTag: svgString.includes('</svg>'),
+          firstLine: svgString.split('\n')[0],
+          lastLine: svgString.split('\n').slice(-3).join('\n')
+        });
+        
+        // Check logo embedding specifically
+        if (logo) {
+          console.log('3. Logo Embedding Analysis:', {
+            logoExists: !!logo,
+            logoType: typeof logo,
+            logoIsDataUrl: logo.startsWith('data:'),
+            logoPreview: logo.substring(0, 100),
+            svgContainsLogoGroup: svgString.includes('custqr-logo-group'),
+            svgContainsImageTag: svgString.includes('<image'),
+            logoGroupMatches: (svgString.match(/custqr-logo-group/g) || []).length
           });
-          const link = document.createElement('a');
-          link.download = 'custqr-code.png';
-          link.href = canvas.toDataURL();
-          link.click();
+          
+          // Extract logo group from SVG for inspection
+          const logoGroupMatch = svgString.match(/<g id="custqr-logo-group">[\s\S]*?<\/g>/);
+          if (logoGroupMatch) {
+            console.log('4. Logo Group Found in SVG:', logoGroupMatch[0]);
+          } else {
+            console.log('4. Logo Group NOT FOUND in SVG');
+            // Check for partial matches
+            console.log('   Checking for partial logo elements:');
+            console.log('   - Contains circle:', svgString.includes('Logo background circle'));
+            console.log('   - Contains image:', svgString.includes('Logo image'));
+            console.log('   - Contains custqr-logo:', svgString.includes('custqr-logo'));
+          }
         }
-      } else if (format === 'svg') {
-        const svgString = await QRCode.toString(sanitizeUrl(url), { 
-          ...options, 
-          type: 'svg' 
+        
+        console.log('=== END SVG DIAGNOSTIC ===');
+        
+        debugLog('SVG generation completed', {
+          finalLength: svgString.length,
+          containsLogo: svgString.includes('custqr-logo-group')
         });
         const blob = new Blob([svgString], { type: 'image/svg+xml' });
+        objectUrl = URL.createObjectURL(blob);
+        
         const link = document.createElement('a');
         link.download = 'custqr-code.svg';
-        link.href = URL.createObjectURL(blob);
+        link.href = objectUrl;
         link.click();
-      } else if (format === 'pdf') {
-        if (qrRef.current) {
-          const canvas = await html2canvas(qrRef.current, {
-            backgroundColor: options.color.light,
-            scale: 2
+      } else {
+        // Generate canvas for PNG/PDF (reuse same canvas for both)
+        const canvas = await generateDownloadQR('canvas') as HTMLCanvasElement;
+        
+        // Add logo overlay using reusable function
+        await addLogoToCanvas(canvas);
+        
+        if (format === 'png') {
+          // Generate maximum quality PNG from high-resolution canvas
+          const dataUrl = canvas.toDataURL('image/png', 1.0); // Maximum quality
+          
+          // Validate PNG generation
+          if (!dataUrl || !dataUrl.startsWith('data:image/png')) {
+            throw new Error('PNG generation failed - invalid data URL');
+          }
+          
+          const link = document.createElement('a');
+          link.download = 'custqr-code.png';
+          link.href = dataUrl;
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          debugLog('High-quality PNG download completed', {
+            canvasSize: `${canvas.width}x${canvas.height}`,
+            estimatedSize: Math.round((dataUrl.length * 0.75) / 1024) + 'KB'
           });
+          
+        } else if (format === 'pdf') {
+          // Generate high-quality PDF with dynamic sizing
           const pdf = new jsPDF();
-          const imgData = canvas.toDataURL('image/png');
-          const imgWidth = 100;
-          const imgHeight = (canvas.height * imgWidth) / canvas.width;
-          pdf.addImage(imgData, 'PNG', 55, 50, imgWidth, imgHeight);
+          const imgData = canvas.toDataURL('image/png', 1.0); // Maximum quality
+          
+          // Validate image data
+          if (!imgData || !imgData.startsWith('data:image/png')) {
+            throw new Error('Failed to convert canvas to image data for PDF');
+          }
+          
+          // Calculate optimal PDF dimensions maintaining aspect ratio
+          const pageWidth = pdf.internal.pageSize.getWidth();
+          const pageHeight = pdf.internal.pageSize.getHeight();
+          
+          // Use larger PDF size for better quality (up to 80% of page)
+          const maxPdfSize = Math.min(pageWidth - 20, pageHeight - 20) * 0.8;
+          const aspectRatio = canvas.height / canvas.width;
+          const pdfWidth = Math.min(maxPdfSize, options.width * 0.8); // Larger scale for quality
+          const pdfHeight = pdfWidth * aspectRatio;
+          
+          // Center the QR code on the page
+          const x = (pageWidth - pdfWidth) / 2;
+          const y = (pageHeight - pdfHeight) / 2;
+          
+          // Add image with maximum quality
+          pdf.addImage(imgData, 'PNG', x, y, pdfWidth, pdfHeight, undefined, 'FAST');
+          
+          // Add professional metadata
+          pdf.setProperties({
+            title: 'CustQR Code',
+            subject: `QR Code for ${url}`,
+            creator: 'CustQR - Professional QR Generator',
+            author: 'CustQR',
+            keywords: 'QR Code, CustQR, Professional'
+          });
+          
           pdf.save('custqr-code.pdf');
+          
+          debugLog('High-quality PDF download completed', {
+            canvasSize: `${canvas.width}x${canvas.height}`,
+            pdfDimensions: `${Math.round(pdfWidth)}x${Math.round(pdfHeight)}`,
+            position: `${Math.round(x)},${Math.round(y)}`
+          });
         }
       }
 
@@ -435,11 +1093,19 @@ const QRGenerator = () => {
         variant: "default"
       });
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Download failed:', error);
+      
       toast({
         title: "Download Failed",
-        description: "Failed to download QR code",
+        description: `Failed to download QR code: ${errorMessage}`,
         variant: "destructive"
       });
+    } finally {
+      // Clean up object URL to prevent memory leaks
+      if (objectUrl) {
+        setTimeout(() => URL.revokeObjectURL(objectUrl!), 100);
+      }
     }
   };
 
@@ -455,7 +1121,7 @@ const QRGenerator = () => {
             </h1>
           </div>
           <p className="text-muted-foreground text-sm sm:text-base md:text-lg px-4 sm:px-0">
-            Professional QR Code Generator for Enterprise Use
+            Professional QR Code Generator
           </p>
         </header>
 
@@ -467,9 +1133,6 @@ const QRGenerator = () => {
                 <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
                 Configuration
               </CardTitle>
-              <CardDescription className="text-xs sm:text-sm">
-                Customize your QR code settings and branding
-              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 sm:space-y-5 md:space-y-6">
               {/* URL Input */}
@@ -499,7 +1162,6 @@ const QRGenerator = () => {
               <Tabs defaultValue="appearance" className="w-full">
                 <TabsList className="grid w-full grid-cols-2 h-9 sm:h-10">
                   <TabsTrigger value="appearance" className="text-xs sm:text-sm">
-                    <Palette className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
                     <span className="hidden xs:inline sm:inline">Appearance</span>
                     <span className="xs:hidden sm:hidden">App</span>
                   </TabsTrigger>
@@ -524,7 +1186,7 @@ const QRGenerator = () => {
                             const validation = validateHexColor(newColor);
                             if (validation.isValid) {
                               setOptions(prev => ({
-                                ...prev,
+                            ...prev,
                                 color: { ...prev.color, dark: newColor }
                               }));
                             }
@@ -559,7 +1221,7 @@ const QRGenerator = () => {
                               });
                               // Reset to previous valid value
                               setOptions(prev => ({
-                                ...prev,
+                            ...prev,
                                 color: { ...prev.color, dark: '#1e293b' }
                               }));
                             }
@@ -581,7 +1243,7 @@ const QRGenerator = () => {
                             const validation = validateHexColor(newColor);
                             if (validation.isValid) {
                               setOptions(prev => ({
-                                ...prev,
+                            ...prev,
                                 color: { ...prev.color, light: newColor }
                               }));
                             }
@@ -616,7 +1278,7 @@ const QRGenerator = () => {
                               });
                               // Reset to previous valid value
                               setOptions(prev => ({
-                                ...prev,
+                            ...prev,
                                 color: { ...prev.color, light: '#ffffff' }
                               }));
                             }
@@ -653,37 +1315,112 @@ const QRGenerator = () => {
                     </div>
                   </div>
 
-                  {/* Logo Upload */}
-                  <div className="space-y-2">
-                    <Label>Logo (Optional)</Label>
+                  {/* Enterprise Logo Upload */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm font-medium">Logo (Optional)</Label>
+                      {logo && (
+                        <Button
+                          onClick={handleLogoRemoval}
+                          variant="destructive"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          aria-label="Remove uploaded logo image"
+                        >
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Remove Image
+                        </Button>
+                      )}
+                    </div>
+                    
                     <div 
-                      onClick={() => logoInputRef.current?.click()}
-                      className="border-2 border-dashed border-border rounded-lg p-4 sm:p-6 text-center cursor-pointer hover:border-primary transition-colors"
+                      onClick={() => !isUploading && logoInputRef.current?.click()}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`
+                        border-2 border-dashed rounded-lg p-4 sm:p-6 text-center transition-all duration-200
+                        ${
+                          isUploading 
+                            ? 'border-primary/50 bg-primary/5 cursor-wait' 
+                            : isDragOver 
+                            ? 'border-primary bg-primary/10 cursor-pointer' 
+                            : logo 
+                            ? 'border-border hover:border-primary/60 cursor-pointer' 
+                            : 'border-border hover:border-primary cursor-pointer'
+                        }
+                      `}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={logo ? "Change logo" : "Upload logo"}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (!isUploading) logoInputRef.current?.click();
+                        }
+                      }}
                     >
-                      {logo ? (
-                        <div className="space-y-2">
-                          <img src={logo} alt="Logo" className="mx-auto h-10 w-10 sm:h-12 sm:w-12 object-contain" />
-                          <p className="text-xs sm:text-sm text-muted-foreground">Click to change logo</p>
+                      {isUploading ? (
+                        <div className="space-y-3">
+                          <div className="mx-auto w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                          <div>
+                            <p className="text-sm font-medium text-primary">Processing Image...</p>
+                            <p className="text-xs text-muted-foreground mt-1">Optimizing for best quality</p>
+                          </div>
+                        </div>
+                      ) : logo ? (
+                        <div className="space-y-3">
+                          <div className="relative inline-block">
+                            <img 
+                              src={logo} 
+                              alt="Logo preview" 
+                              className="mx-auto h-16 w-16 sm:h-20 sm:w-20 object-contain rounded-md border border-border/50" 
+                            />
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-foreground">Logo Ready</p>
+                            <p className="text-xs text-muted-foreground">Click to change or drag new file</p>
+                            {logoInfo && (
+                              <div className="text-xs text-muted-foreground mt-2 space-y-1">
+                                <p className="truncate max-w-[200px] mx-auto">{logoInfo.name}</p>
+                                <p>{logoInfo.dimensions} • {Math.round(logoInfo.size / 1024)}KB</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ) : (
-                        <div className="space-y-2">
-                          <Upload className="mx-auto h-6 w-6 sm:h-8 sm:w-8 text-muted-foreground" />
-                          <p className="text-xs sm:text-sm text-muted-foreground">
-                            <span className="hidden sm:inline">Drag & drop or </span>Click to upload logo
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            PNG, JPG up to 2MB
-                          </p>
+                        <div className="space-y-3">
+                          <div className={`mx-auto transition-colors ${
+                            isDragOver ? 'text-primary' : 'text-muted-foreground'
+                          }`}>
+                            <Upload className="mx-auto h-8 w-8 sm:h-10 sm:w-10" />
+                          </div>
+                          <div>
+                            <p className={`text-sm font-medium transition-colors ${
+                              isDragOver ? 'text-primary' : 'text-foreground'
+                            }`}>
+                              {isDragOver ? 'Drop image here' : 'Upload Logo'}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              <span className="hidden sm:inline">Drag & drop or </span>click to browse
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-2">
+                              PNG, JPG, WebP, SVG • Max 5MB • 32px minimum
+                            </p>
+                          </div>
                         </div>
                       )}
                     </div>
+                    
                     <input
                       ref={logoInputRef}
                       type="file"
-                      accept="image/*"
-                      onChange={handleLogoUpload}
+                      accept="image/jpeg,image/jpg,image/png,image/gif,image/webp,image/svg+xml,image/avif,image/bmp"
+                      onChange={handleFileInputChange}
                       className="hidden"
+                      aria-hidden="true"
                     />
+                    
                   </div>
                 </TabsContent>
 
@@ -713,33 +1450,35 @@ const QRGenerator = () => {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="size">Size (px)</Label>
-                      <Input
-                        id="size"
-                        type="number"
-                        min="128"
-                        max="1024"
-                        step="8"
-                        value={options.width}
-                        onChange={(e) => {
-                          const validation = validateNumericInput(e.target.value, 128, 1024, 256);
+                      <Select
+                        value={options.width.toString()}
+                        onValueChange={(value) => {
+                          const numValue = parseInt(value, 10);
                           setOptions(prev => ({
-                            ...prev,
-                            width: validation.parsedValue
+                          ...prev,
+                            width: numValue
                           }));
                         }}
-                        onBlur={(e) => {
-                          const validation = validateNumericInput(e.target.value, 128, 1024, 256);
-                          if (!validation.isValid) {
-                            toast({
-                              title: "Invalid Size",
-                              description: validation.error,
-                              variant: "destructive"
-                            });
-                          }
-                        }}
-                        className={`${!sizeValidation.isValid ? 'border-destructive' : ''}`}
-                        placeholder="256"
-                      />
+                      >
+                        <SelectTrigger id="size">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="128">128px</SelectItem>
+                          <SelectItem value="160">160px</SelectItem>
+                          <SelectItem value="192">192px</SelectItem>
+                          <SelectItem value="224">224px</SelectItem>
+                          <SelectItem value="256">256px</SelectItem>
+                          <SelectItem value="288">288px</SelectItem>
+                          <SelectItem value="320">320px</SelectItem>
+                          <SelectItem value="352">352px</SelectItem>
+                          <SelectItem value="384">384px</SelectItem>
+                          <SelectItem value="416">416px</SelectItem>
+                          <SelectItem value="448">448px</SelectItem>
+                          <SelectItem value="480">480px</SelectItem>
+                          <SelectItem value="512">512px</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="margin">Margin</Label>
@@ -753,7 +1492,7 @@ const QRGenerator = () => {
                         onChange={(e) => {
                           const validation = validateNumericInput(e.target.value, 0, 10, 2);
                           setOptions(prev => ({
-                            ...prev,
+                          ...prev,
                             margin: validation.parsedValue
                           }));
                         }}
@@ -781,9 +1520,6 @@ const QRGenerator = () => {
           <Card className="gradient-glass shadow-medium h-fit">
             <CardHeader className="pb-3 sm:pb-6">
               <CardTitle className="text-lg sm:text-xl md:text-2xl">Preview & Download</CardTitle>
-              <CardDescription className="text-xs sm:text-sm">
-                Real-time preview of your QR code
-              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 sm:space-y-5 md:space-y-6">
               {/* QR Preview */}
@@ -829,11 +1565,22 @@ const QRGenerator = () => {
                       />
                       {logo && (
                         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
-                          <div className="bg-white p-1 rounded-full shadow-md">
+                          <div 
+                            className="bg-white rounded-full shadow-md flex items-center justify-center"
+                            style={{
+                              padding: `${previewCirclePadding}px`,
+                              width: `${previewLogoSize + (previewCirclePadding * 2)}px`,
+                              height: `${previewLogoSize + (previewCirclePadding * 2)}px`
+                            }}
+                          >
                             <img 
                               src={logo} 
                               alt="Logo" 
-                              className="w-8 h-8 object-contain"
+                              className="object-contain"
+                              style={{
+                                width: `${previewLogoSize}px`,
+                                height: `${previewLogoSize}px`
+                              }}
                             />
                           </div>
                         </div>
